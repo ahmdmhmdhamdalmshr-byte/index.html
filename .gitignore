@@ -1,0 +1,130 @@
+
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>صياد الانفجارات</title>
+<style>
+body{background:#101827;color:white;font-family:Arial;padding:15px}
+h2{color:#00e6a0;text-align:center}
+button{background:#00c98b;color:#071b16;border:0;padding:15px;width:100%;border-radius:9px;font-size:18px;font-weight:bold}
+.card{background:#1c293b;padding:13px;margin:12px 0;border-radius:10px;border-right:4px solid #00d69a}
+.green{color:#00e6a0}
+.red{color:#ff6262}
+.small{color:#b8c5d5;font-size:13px}
+</style>
+</head>
+<body>
+<h2>🎯 صياد الانفجارات</h2>
+<p>Binance USDT Futures | فريم 15 دقيقة</p>
+<p>رأس المال: 100 دولار | المخاطرة: منخفضة</p>
+<button onclick="scan()">🔍 افحص السوق الآن</button>
+<p id="status">جاهز للبحث عن العملات</p>
+<div id="results"></div>
+
+<script>
+const API="https://fapi.binance.com";
+
+async function get(url){
+ const r=await fetch(API+url);
+ if(!r.ok) throw Error("HTTP "+r.status);
+ return r.json();
+}
+
+async function analyze(symbol){
+ try{
+  const k=await get("/fapi/v1/klines?symbol="+symbol+"&interval=15m&limit=30");
+  if(!Array.isArray(k)||k.length<25)return null;
+
+  const candles=k.slice(0,-1);
+  const last=candles[candles.length-1];
+  const previous=candles.slice(-21,-1);
+
+  const close=Number(last[4]);
+  const high=Number(last[2]);
+  const low=Number(last[3]);
+  const open=Number(last[1]);
+  const volume=Number(last[5]);
+
+  const avgVol=previous.reduce((s,c)=>s+Number(c[5]),0)/previous.length;
+  const avgRange=previous.reduce((s,c)=>s+(Number(c[2])-Number(c[3]))/Number(c[4]),0)/previous.length;
+
+  const range=(high-low)/close;
+  const change=(close-open)/open*100;
+  const volRatio=volume/(avgVol||1);
+
+  const score=
+   (avgRange<0.012?30:avgRange<0.02?20:10)+
+   (volRatio>1.5?30:volRatio>1.15?20:5)+
+   (range<0.015?15:5)+
+   (Math.abs(change)<1?15:5)+
+   (close>Number(last[1])?10:5);
+
+  return {
+   symbol,close,change,volRatio,score,
+   direction:change>=0?"صعود":"هبوط"
+  };
+ }catch(e){return null;}
+}
+
+async function scan(){
+ const status=document.getElementById("status");
+ const results=document.getElementById("results");
+ results.innerHTML="";
+ status.innerText="⏳ جاري فحص السوق...";
+
+ try{
+  const info=await get("/fapi/v1/exchangeInfo");
+  const tickers=await get("/fapi/v1/ticker/24hr");
+
+  const valid=new Set(info.symbols
+   .filter(s=>s.status==="TRADING" &&
+    s.quoteAsset==="USDT" &&
+    s.contractType==="PERPETUAL")
+   .map(s=>s.symbol));
+
+  const top=tickers
+   .filter(t=>valid.has(t.symbol))
+   .sort((a,b)=>Number(b.quoteVolume)-Number(a.quoteVolume))
+   .slice(0,35);
+
+  let found=[];
+  for(let i=0;i<top.length;i+=4){
+   const batch=top.slice(i,i+4);
+   const data=await Promise.all(batch.map(t=>analyze(t.symbol)));
+   found.push(...data.filter(x=>x!==null));
+  }
+
+  found.sort((a,b)=>b.score-a.score);
+
+  const best=found.slice(0,5);
+
+  if(!best.length){
+   status.innerText="لم تظهر نتائج. حاول مرة أخرى.";
+   return;
+  }
+
+  status.innerText="✅ انتهى الفحص - أفضل 5 عملات";
+
+  best.forEach((c,i)=>{
+   results.innerHTML+=`
+   <div class="card">
+   <h3>${i+1} - ${c.symbol}</h3>
+   <p>السعر: ${c.close}</p>
+   <p>التغير: ${c.change.toFixed(2)}%</p>
+   <p>حجم التداول مقارنة بالمتوسط:
+   ${c.volRatio.toFixed(2)} مرة</p>
+   <p>الاتجاه: ${c.direction}</p>
+   <p class="green">قوة الترشيح: ${c.score}/100</p>
+   <p class="small">مرشح للمراقبة - ليس تأكيداً للانفجار أو توصية دخول</p>
+   </div>`;
+  });
+
+ }catch(e){
+  status.innerText="خطأ في الاتصال أو الفحص: "+e.message;
+ }
+}
+</script>
+</body>
+</html>
